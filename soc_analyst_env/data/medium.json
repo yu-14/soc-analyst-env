@@ -1,0 +1,26 @@
+{
+  "task": "medium",
+  "max_steps": 28,
+  "instruction": "Correlate application and worker logs across two internal services. Identify the shared correlation key/value that links the suspicious activity, classify the alert, list MITRE technique IDs you can justify, and propose remediation steps. Use submit_correlation before finalizing.",
+  "alert": {
+    "id": "ALT-8891",
+    "rule": "ABNORMAL_QUEUE_DRAIN_AND_TOKEN_USE",
+    "severity": "high"
+  },
+  "log_lines": [
+    "2026-04-01T11:12:01Z svc=orders-api req_id=9c21 trace_id=trace-7f2a91c4 user=svc-checkout status=200 path=/v2/orders/confirm",
+    "2026-04-01T11:12:02Z svc=orders-api req_id=9c22 trace_id=trace-7f2a91c4 user=anonymous status=401 path=/internal/debug/heapdump",
+    "2026-04-01T11:12:03Z svc=orders-api req_id=9c23 trace_id=trace-7f2a91c4 user=anonymous status=200 path=/internal/actuator/env",
+    "2026-04-01T11:12:04Z svc=inventory-worker job=sync-442 trace_id=trace-7f2a91c4 action=dequeue sku_batch=BB-9912 destination=s3://tmp-debug-drop",
+    "2026-04-01T11:12:05Z svc=inventory-worker job=sync-443 trace_id=trace-7f2a91c4 action=dequeue sku_batch=CC-2201 destination=s3://tmp-debug-drop",
+    "2026-04-01T11:12:06Z svc=orders-api req_id=9c24 trace_id=trace-8aa11111 user=svc-checkout status=200 path=/health"
+  ],
+  "gold_verdict": "true_positive",
+  "gold_primary_technique": "T1190",
+  "gold_technique_ids": ["T1190", "T1071"],
+  "gold_remediation": ["isolate_orders_api", "rotate_service_tokens", "review_waf_rules"],
+  "gold_service_a": "orders-api",
+  "gold_service_b": "inventory-worker",
+  "gold_link_key": "trace_id",
+  "gold_link_value": "trace-7f2a91c4"
+}
