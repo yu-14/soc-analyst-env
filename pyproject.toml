@@ -1,0 +1,32 @@
+# Copyright (c) Meta Platforms, Inc. and affiliates.
+# SPDX-License-Identifier: BSD-3-Clause
+
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "openenv-soc-analyst-env"
+version = "0.1.0"
+description = "Synthetic SOC analyst triage environment for OpenEnv"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core[core]>=0.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "openai>=1.0.0",
+]
+
+[project.scripts]
+server = "soc_analyst_env.server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["soc_analyst_env", "soc_analyst_env.server"]
+package-dir = { "soc_analyst_env" = ".", "soc_analyst_env.server" = "server" }
+
+[tool.setuptools.package-data]
+soc_analyst_env = ["data/*.json"]
