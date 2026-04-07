@@ -95,7 +95,9 @@ Environment variables:
 | `API_BASE_URL` | OpenAI-compatible API base (e.g. `https://api.openai.com/v1` or an HF router) |
 | `MODEL_NAME` | Model id |
 | `HF_TOKEN` | API key (or set `OPENAI_API_KEY`) |
-| `OPENENV_BASE_URL` | Optional; OpenEnv HTTP server (default `http://127.0.0.1:8000`) |
+| `OPENENV_BASE_URL` | Full URL of the OpenEnv server (overrides host/port) |
+| `OPENENV_HOST` / `OPENENV_PORT` | Default host `127.0.0.1`, port **`7860`** (HF Spaces / many Dockerfiles); `PORT` is used if `OPENENV_PORT` is unset |
+| `ENV_WAIT_TIMEOUT` | Seconds to poll `/health` before failing (default **60**) |
 | `TASK` | `easy` \| `medium` \| `hard` (or pass `--task`) |
 | `BENCHMARK` | Label for `[START]` line (default `soc_analyst_env`) |
 | `MAX_LLM_STEPS` | Upper bound on LLM turns |
@@ -111,10 +113,11 @@ Strict stdout format (two decimal rewards; lowercase booleans):
 Example:
 
 ```bash
-set OPENENV_BASE_URL=http://127.0.0.1:8000
-set API_BASE_URL=https://api.openai.com/v1
-set MODEL_NAME=gpt-4o-mini
-set HF_TOKEN=...
+# Default without OPENENV_BASE_URL is http://127.0.0.1:7860 (see also PORT / OPENENV_PORT)
+export OPENENV_BASE_URL=http://127.0.0.1:8000   # optional: local OpenEnv on 8000
+export API_BASE_URL=https://api.openai.com/v1
+export MODEL_NAME=gpt-4o-mini
+export HF_TOKEN=...
 python inference.py --task medium
 ```
 
