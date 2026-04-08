@@ -1,7 +1,7 @@
 {
-  "task": "medium",
+  "task_id": "find_compromised_account",
   "max_steps": 28,
-  "instruction": "Correlate application and worker logs across two internal services. Identify the shared correlation key/value that links the suspicious activity, classify the alert, list MITRE technique IDs you can justify, and propose remediation steps. Use submit_correlation before finalizing.",
+  "instruction": "Task 2 — Compromised account: Correlate orders-api and inventory-worker logs. Find the shared trace_id, classify the alert, and name the account used on the suspicious /internal/* requests. On finalize_triage set metadata.compromised_account (e.g. \"anonymous\"). Use submit_correlation before finalizing.",
   "alert": {
     "id": "ALT-8891",
     "rule": "ABNORMAL_QUEUE_DRAIN_AND_TOKEN_USE",
@@ -15,6 +15,7 @@
     "2026-04-01T11:12:05Z svc=inventory-worker job=sync-443 trace_id=trace-7f2a91c4 action=dequeue sku_batch=CC-2201 destination=s3://tmp-debug-drop",
     "2026-04-01T11:12:06Z svc=orders-api req_id=9c24 trace_id=trace-8aa11111 user=svc-checkout status=200 path=/health"
   ],
+  "gold_compromised_account": "anonymous",
   "gold_verdict": "true_positive",
   "gold_primary_technique": "T1190",
   "gold_technique_ids": ["T1190", "T1071"],

@@ -1,7 +1,7 @@
 {
-  "task": "hard",
+  "task_id": "recommend_firewall_rule",
   "max_steps": 42,
-  "instruction": "Heavy background noise from CI runners, DHCP, and DNS. Identify the multi-stage intrusion: justified MITRE technique IDs only, correct high-level verdict, and remediation steps in the exact operational order (immutable backups before re-imaging, etc.). Avoid flagging routine dev traffic as compromise.",
+  "instruction": "Task 3 — Firewall / WAF playbook: Heavy noise from CI, DHCP, DNS. Find the real intrusion chain, verdict, MITRE IDs, and an ordered remediation list. Each remediation_steps entry should use lowercase_snake_case ids. Include these firewall-adjacent controls as separate steps (exact strings): block_known_c2_domains, isolate_affected_hosts, revoke_compromised_credentials, restore_from_immutable_backup, deploy_detection_content_update — in that operational order.",
   "alert": {
     "id": "ALT-9901",
     "rule": "MULTI_HOST_ANOMALY_COMPOSITE",
@@ -58,6 +58,13 @@
     "isolate_affected_hosts",
     "revoke_compromised_credentials",
     "block_known_c2_domains",
+    "restore_from_immutable_backup",
+    "deploy_detection_content_update"
+  ],
+  "gold_firewall_rules": [
+    "block_known_c2_domains",
+    "isolate_affected_hosts",
+    "revoke_compromised_credentials",
     "restore_from_immutable_backup",
     "deploy_detection_content_update"
   ]

@@ -20,7 +20,7 @@ class SocAnalystEnv(EnvClient[SocAction, SocObservation, SocState]):
     def _parse_result(self, payload: Dict[str, Any]) -> StepResult[SocObservation]:
         obs_data = payload.get("observation", {})
         observation = SocObservation(
-            task=obs_data.get("task", "easy"),
+            task=obs_data.get("task", "identify_malicious_ip"),
             instruction=obs_data.get("instruction", ""),
             alert_id=obs_data.get("alert_id", ""),
             alert_rule=obs_data.get("alert_rule", ""),
@@ -45,7 +45,7 @@ class SocAnalystEnv(EnvClient[SocAction, SocObservation, SocState]):
         return SocState(
             episode_id=payload.get("episode_id"),
             step_count=payload.get("step_count", 0),
-            task=payload.get("task", "easy"),
+            task=payload.get("task", "identify_malicious_ip"),
             shaped_score=float(payload.get("shaped_score", 0.0)),
             episode_complete=bool(payload.get("episode_complete", False)),
             last_total_reward=float(payload.get("last_total_reward", 0.0)),

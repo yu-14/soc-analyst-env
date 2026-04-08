@@ -62,7 +62,13 @@ class SocObservation(Observation):
 
     model_config = {"extra": "forbid", "validate_assignment": True}
 
-    task: Literal["easy", "medium", "hard"] = Field(...)
+    task: str = Field(
+        ...,
+        description=(
+            "Task id: identify_malicious_ip | find_compromised_account | "
+            "recommend_firewall_rule (or legacy aliases easy, medium, hard)"
+        ),
+    )
     instruction: str = Field(..., description="Task prompt without hidden answers")
     alert_id: str = ""
     alert_rule: str = ""
@@ -86,7 +92,7 @@ class SocState(State):
 
     model_config = {"extra": "forbid", "validate_assignment": True}
 
-    task: Literal["easy", "medium", "hard"] = Field(default="easy")
+    task: str = Field(default="identify_malicious_ip")
     shaped_score: float = Field(default=0.0)
     episode_complete: bool = Field(default=False)
     last_total_reward: float = Field(default=0.0)

@@ -1,7 +1,7 @@
 {
-  "task": "easy",
+  "task_id": "identify_malicious_ip",
   "max_steps": 18,
-  "instruction": "A low-severity IDS rule fired on the jump host. Decide if this is a true_positive (active compromise), false_positive (rule misfire / benign security testing), or benign (expected ops). If you map to MITRE techniques, list only those clearly supported by the excerpt.",
+  "instruction": "Task 1 — Malicious source IP: A low-severity IDS rule fired on the jump host. Determine true_positive / false_positive / benign. Identify the external IP driving the SSH noise (see logs). On finalize_triage, set metadata.malicious_ip to that IPv4 (e.g. \"203.0.113.50\"). List MITRE IDs only when justified.",
   "alert": {
     "id": "ALT-2044",
     "rule": "SSH_AUTH_FAIL_BURST",
@@ -14,6 +14,7 @@
     "2026-04-01T10:00:04Z host=jump-01 systemd: Started Session 8812 of user backup-runner.",
     "2026-04-01T10:00:05Z host=jump-01 cron[884]: (backup-runner) CMD (/usr/local/bin/nightly_backup.sh)"
   ],
+  "gold_malicious_ip": "203.0.113.50",
   "gold_verdict": "false_positive",
   "gold_primary_technique": null,
   "gold_technique_ids": [],

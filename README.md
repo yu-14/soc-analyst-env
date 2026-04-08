@@ -10,7 +10,8 @@ Synthetic **security operations (SOC)** triage for agent evaluation: parse bound
 | [soc_analyst_env/openenv.yaml](soc_analyst_env/openenv.yaml) | OpenEnv manifest |
 | [soc_analyst_env/models.py](soc_analyst_env/models.py) | Pydantic `SocAction`, `SocObservation`, `SocState`, `SocReward` |
 | [soc_analyst_env/graders.py](soc_analyst_env/graders.py) | Deterministic scores in `[0.0, 1.0]` |
-| [soc_analyst_env/data/](soc_analyst_env/data/) | Gold JSON per task |
+| [soc_analyst_env/tasks.py](soc_analyst_env/tasks.py) | Registered task list + grader bindings |
+| [soc_analyst_env/data/](soc_analyst_env/data/) | Gold JSON per task (`identify_malicious_ip`, …) |
 | [inference.py](inference.py) | OpenAI-compatible client + **strict stdout** logs |
 
 ## Action space (`SocAction`)
@@ -35,18 +36,24 @@ All actions extend OpenEnv `Action` with a required `kind`:
 
 Structured breakdown is attached on the server for logging; the scalar passed over the wire is `Observation.reward`. Shaped updates accumulate in `shaped_score`; terminal `finalize_triage` blends **0.5 × shaped + 0.5 × grader**.
 
-## Tasks (difficulty)
+## Tasks (three registered graders)
 
-| Task | Focus | Grader |
-|------|--------|--------|
-| **easy** | Single alert, small log window | Verdict + primary technique + technique set consistency |
-| **medium** | Two services + shared correlation key | Correlation fields + verdict + technique F1 |
-| **hard** | Multi-stage pattern in heavy noise | Verdict + technique F1 + **ordered** remediation + anti-hallucination penalty |
+Each task has a **canonical id**, a **JSON gold file** in `data/`, and a **`def grade_*` function** in `graders.py`. The same definitions are listed under `tasks:` in [openenv.yaml](soc_analyst_env/openenv.yaml) and in `SOC_ANALYST_TASKS` / `GRADERS_BY_TASK_ID` in [tasks.py](soc_analyst_env/tasks.py).
 
-Reset selects the task:
+| Canonical id | Legacy alias | SOC focus | Grader function | Agent hints (on `finalize_triage`) |
+|--------------|--------------|-----------|-----------------|-------------------------------------|
+| `identify_malicious_ip` | `easy` | Malicious source IP from auth logs | `grade_identify_malicious_ip` | Set `metadata.malicious_ip` to the IPv4 (e.g. `203.0.113.50`). |
+| `find_compromised_account` | `medium` | Compromised account + service correlation | `grade_find_compromised_account` | Set `metadata.compromised_account` (e.g. `anonymous`); use `submit_correlation`. |
+| `recommend_firewall_rule` | `hard` | Noisy APT + firewall/WAF playbook steps | `grade_recommend_firewall_rule` | `remediation_steps` must include each id in `gold_firewall_rules` (see JSON). |
+
+Reset:
 
 ```python
-client.reset(task="easy")    # or "medium", "hard"
+client.reset(task="identify_malicious_ip")
+# or legacy aliases:
+client.reset(task="easy")    # same as identify_malicious_ip
+client.reset(task="medium")  # find_compromised_account
+client.reset(task="hard")    # recommend_firewall_rule
 ```
 
 ## Setup
