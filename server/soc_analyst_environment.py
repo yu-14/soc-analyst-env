@@ -7,18 +7,18 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Literal, Optional, cast
+from typing import Any, Optional
 from uuid import uuid4
 
 from openenv.core.env_server.interfaces import Environment
 from openenv.core.env_server.types import EnvironmentMetadata
 
 try:
-    from graders import grade_easy, grade_hard, grade_medium
     from models import SocAction, SocObservation, SocReward, SocState
+    from tasks import get_grader_for_task, resolve_task_id
 except ImportError:
-    from ..graders import grade_easy, grade_hard, grade_medium
     from ..models import SocAction, SocObservation, SocReward, SocState
+    from ..tasks import get_grader_for_task, resolve_task_id
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
@@ -32,7 +32,8 @@ _COMMANDS = [
 
 
 def _load_gold(task: str) -> dict[str, Any]:
-    path = _DATA_DIR / f"{task}.json"
+    canonical = resolve_task_id(task)
+    path = _DATA_DIR / f"{canonical}.json"
     with path.open(encoding="utf-8") as f:
         return json.load(f)
 
@@ -59,7 +60,7 @@ def _correlation_partial(gold: dict[str, Any], corr: dict[str, str]) -> float:
 
 
 class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
-    """Synthetic alert triage with easy / medium / hard scenarios."""
+    """Synthetic SOC triage: three registered tasks (see tasks.SOC_ANALYST_TASKS)."""
 
     SUPPORTS_CONCURRENT_SESSIONS: bool = True
 
@@ -67,7 +68,7 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
         super().__init__()
         self._state: SocState = SocState(episode_id=str(uuid4()), step_count=0)
         self._gold: dict[str, Any] = {}
-        self._task: Literal["easy", "medium", "hard"] = "easy"
+        self._task: str = resolve_task_id("easy")
         self._shaped: float = 0.5
         self._last_sig: Optional[str] = None
         self._last_correlation: Optional[dict[str, str]] = None
@@ -94,10 +95,7 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
     ) -> SocObservation:
         self._reset_rubric()
         raw_task = kwargs.get("task", "easy")
-        if raw_task not in ("easy", "medium", "hard"):
-            self._task = "easy"
-        else:
-            self._task = cast(Literal["easy", "medium", "hard"], raw_task)
+        self._task = resolve_task_id(str(raw_task))
         self._gold = _load_gold(self._task)
         self._state = SocState(
             episode_id=episode_id or str(uuid4()),
@@ -153,20 +151,19 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
         elif self._last_correlation:
             corr = dict(self._last_correlation)
 
+        meta = dict(action.metadata) if action.metadata else {}
+
         return {
             "verdict": action.verdict,
             "primary_technique": action.primary_technique,
             "technique_ids": list(action.technique_ids),
             "remediation_steps": list(action.remediation_steps),
             "correlation": corr,
+            "metadata": meta,
         }
 
     def _grade(self, submission: dict[str, Any]) -> float:
-        if self._task == "easy":
-            return grade_easy(self._gold, submission)
-        if self._task == "medium":
-            return grade_medium(self._gold, submission)
-        return grade_hard(self._gold, submission)
+        return get_grader_for_task(self._task)(self._gold, submission)
 
     def step(
         self,
@@ -315,8 +312,9 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
         return EnvironmentMetadata(
             name="soc_analyst_env",
             description=(
-                "Synthetic SOC alert triage with bounded logs, MITRE ATT&CK-style technique IDs, "
-                "and deterministic graders (easy / medium / hard)."
+                "Synthetic SOC alert triage with three registered tasks and graders: "
+                "identify_malicious_ip, find_compromised_account, recommend_firewall_rule "
+                "(aliases: easy, medium, hard)."
             ),
             version="0.1.0",
         )
