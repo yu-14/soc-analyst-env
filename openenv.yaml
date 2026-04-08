@@ -6,18 +6,16 @@ app: server.app:app
 port: 8000
 description: Synthetic SOC log triage with MITRE ATT&CK-style labels and deterministic graders.
 
-# Tasks: each grader MUST be importable as "module.path:callable" (same style as `app:`).
-# Use soc_analyst_env.graders:* when the package is installed or repo root is on PYTHONPATH.
 tasks:
   - id: identify_malicious_ip
     title: "Task 1: Identify the malicious source IP"
-    grader: graders:grade_identify_malicious_ip
-    data: data/identify_malicious_ip.json
+    grader: soc_analyst_env.graders:grade_identify_malicious_ip
+    data: soc_analyst_env/data/identify_malicious_ip.json
   - id: find_compromised_account
     title: "Task 2: Find the compromised user account"
-    grader: graders:grade_find_compromised_account
-    data: data/find_compromised_account.json
+    grader: soc_analyst_env.graders:grade_find_compromised_account
+    data: soc_analyst_env/data/find_compromised_account.json
   - id: recommend_firewall_rule
     title: "Task 3: Recommend firewall / WAF-style controls"
-    grader: graders:grade_recommend_firewall_rule
-    data: data/recommend_firewall_rule.json
+    grader: soc_analyst_env.graders:grade_recommend_firewall_rule
+    data: soc_analyst_env/data/recommend_firewall_rule.json
