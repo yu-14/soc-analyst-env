@@ -1,0 +1,22 @@
+{
+  "task_id": "identify_malicious_ip",
+  "max_steps": 18,
+  "instruction": "Task 1 — Malicious source IP: A low-severity IDS rule fired on the jump host. Determine true_positive / false_positive / benign. Identify the external IP driving the SSH noise (see logs). On finalize_triage, set metadata.malicious_ip to that IPv4 (e.g. \"203.0.113.50\"). List MITRE IDs only when justified.",
+  "alert": {
+    "id": "ALT-2044",
+    "rule": "SSH_AUTH_FAIL_BURST",
+    "severity": "low"
+  },
+  "log_lines": [
+    "2026-04-01T10:00:01Z host=jump-01 sshd[1201]: Failed password for invalid user deploymgr from 203.0.113.50 port 44221 ssh2",
+    "2026-04-01T10:00:02Z host=jump-01 sshd[1201]: Failed password for invalid user deploymgr from 203.0.113.50 port 44222 ssh2",
+    "2026-04-01T10:00:03Z host=jump-01 sshd[1201]: Disconnecting authenticating user deploymgr 203.0.113.50: Too many authentication failures [preauth]",
+    "2026-04-01T10:00:04Z host=jump-01 systemd: Started Session 8812 of user backup-runner.",
+    "2026-04-01T10:00:05Z host=jump-01 cron[884]: (backup-runner) CMD (/usr/local/bin/nightly_backup.sh)"
+  ],
+  "gold_malicious_ip": "203.0.113.50",
+  "gold_verdict": "false_positive",
+  "gold_primary_technique": null,
+  "gold_technique_ids": [],
+  "gold_remediation": []
+}
