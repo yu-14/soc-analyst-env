@@ -11,13 +11,13 @@ description: Synthetic SOC log triage with MITRE ATT&CK-style labels and determi
 tasks:
   - id: identify_malicious_ip
     title: "Task 1: Identify the malicious source IP"
-    grader: soc_analyst_env.graders:grade_identify_malicious_ip
+    grader: graders:grade_identify_malicious_ip
     data: data/identify_malicious_ip.json
   - id: find_compromised_account
     title: "Task 2: Find the compromised user account"
-    grader: soc_analyst_env.graders:grade_find_compromised_account
+    grader: graders:grade_find_compromised_account
     data: data/find_compromised_account.json
   - id: recommend_firewall_rule
     title: "Task 3: Recommend firewall / WAF-style controls"
-    grader: soc_analyst_env.graders:grade_recommend_firewall_rule
+    grader: graders:grade_recommend_firewall_rule
     data: data/recommend_firewall_rule.json
