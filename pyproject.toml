@@ -25,8 +25,12 @@ server = "soc_analyst_env.server.app:main"
 
 [tool.setuptools]
 include-package-data = true
-packages = ["soc_analyst_env", "soc_analyst_env.server"]
-package-dir = { "soc_analyst_env" = ".", "soc_analyst_env.server" = "server" }
+
+# Discover packages under ./soc_analyst_env/ (do NOT map soc_analyst_env to ".", or a root
+# `pip install .` installs an empty/wrong tree and `soc_analyst_env.graders` is missing).
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["soc_analyst_env*"]
 
 [tool.setuptools.package-data]
 soc_analyst_env = ["data/*.json"]
