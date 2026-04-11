@@ -104,9 +104,9 @@ def log_step(step: int, action_str: str, reward: Any, done: bool, error: Optiona
     )
 
 
-def log_end(success: bool, steps: int, rewards: List[float]) -> None:
+def log_end(success: bool, steps: int, score: float, rewards: List[float]) -> None:
     print(
-        f"[END] success={fmt_bool(success)} steps={steps} rewards={fmt_rewards_list(rewards)}",
+        f"[END] success={fmt_bool(success)} steps={steps} score={safe_reward(score):.3f} rewards={fmt_rewards_list(rewards)}",
         flush=True,
     )
 
@@ -309,7 +309,8 @@ def run_task(
     if not rewards:
         rewards.append(safe_reward(0))
 
-    log_end(success, steps, rewards)
+    final_score = safe_reward(rewards[-1])
+    log_end(success, steps, final_score, rewards)
 
 
 # ---------------------------------------------------------------------------
@@ -325,7 +326,7 @@ def main() -> None:
         for t in ALL_TASKS:
             log_start(t, model_name)
             log_step(1, NOOP_STR, 0, True, "HF_TOKEN not set")
-            log_end(False, 1, [safe_reward(0)])
+            log_end(False, 1, safe_reward(0), [safe_reward(0)])
         sys.exit(0)
 
     env_url = _resolve_env_url()
@@ -334,7 +335,7 @@ def main() -> None:
         for t in ALL_TASKS:
             log_start(t, model_name)
             log_step(1, NOOP_STR, 0, True, "env not reachable")
-            log_end(False, 1, [safe_reward(0)])
+            log_end(False, 1, safe_reward(0), [safe_reward(0)])
         sys.exit(0)
 
     llm = OpenAI(base_url=api_base_url, api_key=hf_token)
@@ -346,7 +347,7 @@ def main() -> None:
             traceback.print_exc(file=sys.stderr)
             log_start(task_name, model_name)
             log_step(1, NOOP_STR, 0, True, "fatal")
-            log_end(False, 1, [safe_reward(0)])
+            log_end(False, 1, safe_reward(0), [safe_reward(0)])
 
 
 if __name__ == "__main__":
