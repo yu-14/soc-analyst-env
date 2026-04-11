@@ -22,6 +22,21 @@ except ImportError:
 
 _DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 
+_SCORE_FLOOR = 0.01
+_SCORE_CEIL = 0.99
+
+
+def _safe_reward(r: float) -> float:
+    """Clamp to (0, 1) exclusive so the hackathon validator never sees 0.0 or 1.0."""
+    return max(_SCORE_FLOOR, min(_SCORE_CEIL, r))
+
+
+def _safe_grader_score(s: Optional[float]) -> Optional[float]:
+    if s is None:
+        return None
+    return _safe_reward(s)
+
+
 _COMMANDS = [
     "noop",
     "submit_hypothesis",
@@ -124,7 +139,7 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
             available_commands=list(_COMMANDS),
             feedback="Episode started. Investigate logs; call finalize_triage when ready.",
             done=False,
-            reward=0.0,
+            reward=_SCORE_FLOOR,
             final_grader_score=None,
             episode_success=False,
             metadata={"seed": seed, "episode_id": self._state.episode_id},
@@ -180,9 +195,9 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
                 log_view="",
                 feedback="Episode already finished.",
                 done=True,
-                reward=0.0,
+                reward=_safe_reward(0.0),
                 max_steps=mx,
-                final_grader_score=self._final_score,
+                final_grader_score=_safe_grader_score(self._final_score),
                 episode_success=bool((self._final_score or 0.0) >= 0.85),
                 metadata={"error": "episode_complete"},
             )
@@ -280,10 +295,11 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
 
         alert = self._gold.get("alert", {})
         logs = "\n".join(self._gold.get("log_lines", []))
+        clamped_grader = _safe_grader_score(self._final_score)
         ep_ok = bool(done and (self._final_score or 0.0) >= 0.85)
         meta = {
             "reward_breakdown": reward_info.model_dump(),
-            "final_grader_score": self._final_score,
+            "final_grader_score": clamped_grader,
             "success": ep_ok,
         }
 
@@ -298,8 +314,8 @@ class SocAnalystEnvironment(Environment[SocAction, SocObservation, SocState]):
             available_commands=list(_COMMANDS),
             feedback=feedback,
             done=done,
-            reward=reward_info.total,
-            final_grader_score=self._final_score,
+            reward=_safe_reward(reward_info.total),
+            final_grader_score=clamped_grader,
             episode_success=ep_ok,
             metadata=meta,
         )
