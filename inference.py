@@ -1,35 +1,29 @@
 #!/usr/bin/env python3
-# Copyright (c) Meta Platforms, Inc. and affiliates.
-# SPDX-License-Identifier: BSD-3-Clause
-
 """
-LLM-driven rollouts with strict stdout logging for hackathon evaluation.
+LLM-driven rollouts for the SOC analyst OpenEnv environment.
 
-Environment variables:
-  API_BASE_URL      - OpenAI-compatible API base URL
-  MODEL_NAME        - Model id
-  HF_TOKEN          - API key (or set OPENAI_API_KEY)
-  OPENENV_BASE_URL  - Full URL of the OpenEnv HTTP server (overrides host/port)
-  OPENENV_HOST      - Host for OpenEnv (default 127.0.0.1)
-  OPENENV_PORT      - Port for OpenEnv (default 7860; aligns with many HF Space Dockerfiles)
-  PORT              - If set (e.g. on HF Spaces) and OPENENV_PORT unset, used as OpenEnv port
-  ENV_WAIT_TIMEOUT  - Seconds to wait for /health (default 60)
+Runs ALL 3 registered tasks in a single invocation so the hackathon
+validator counts 3 graded episodes from the stdout logs.
+
+Env vars (hackathon-mandated):
+  API_BASE_URL  – LLM endpoint          (default: https://api.openai.com/v1)
+  MODEL_NAME    – model id              (default: gpt-4o-mini)
+  HF_TOKEN      – API key               (REQUIRED, no default)
 """
 
 from __future__ import annotations
 
-import argparse
 import json
 import os
 import re
 import sys
 import time
+import traceback
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any, List, Optional
 
-# Repo layout: Round_One/soc_analyst_env/
 _ROOT = Path(__file__).resolve().parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
@@ -39,33 +33,44 @@ from openai import OpenAI
 from soc_analyst_env.client import SocAnalystEnv
 from soc_analyst_env.models import SocAction
 
+ALL_TASKS: List[str] = [
+    "identify_malicious_ip",
+    "find_compromised_account",
+    "recommend_firewall_rule",
+]
 
-def _fmt_reward(r: Optional[float]) -> str:
-    if r is None:
-        return "0.00"
-    return f"{float(r):.2f}"
+BENCHMARK = "soc_analyst_env"
+MAX_LLM_STEPS = 5
 
 
-def _fmt_bool(b: bool) -> str:
+# ---------------------------------------------------------------------------
+# Formatting helpers (match hackathon stdout spec exactly)
+# ---------------------------------------------------------------------------
+
+def _f_reward(r: Optional[float]) -> str:
+    return f"{float(r or 0):.2f}"
+
+
+def _f_bool(b: bool) -> str:
     return "true" if b else "false"
 
 
-def _noop_action_json() -> str:
-    return json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
-
-
-def _escape_step_error(msg: Optional[str]) -> str:
+def _f_error(msg: Optional[str]) -> str:
     if msg is None:
         return "null"
-    # Keep stdout parseable: collapse whitespace, trim length
     s = str(msg).replace("\n", " ").replace("\r", " ").strip()
-    if len(s) > 240:
-        s = s[:237] + "..."
-    return s
+    return s[:240] if len(s) <= 240 else s[:237] + "..."
 
 
-def resolve_openenv_base_url() -> str:
-    """OPENENV_BASE_URL wins; else http://OPENENV_HOST:OPENENV_PORT (default port 7860)."""
+def _compact(action: SocAction) -> str:
+    return json.dumps(action.model_dump(), separators=(",", ":"))
+
+
+# ---------------------------------------------------------------------------
+# Wait for the FastAPI container to become healthy
+# ---------------------------------------------------------------------------
+
+def _resolve_env_url() -> str:
     explicit = os.environ.get("OPENENV_BASE_URL", "").strip()
     if explicit:
         return explicit.rstrip("/")
@@ -75,304 +80,257 @@ def resolve_openenv_base_url() -> str:
         or os.environ.get("PORT", "").strip()
         or "7860"
     )
-    return f"http://{host}:{port}".rstrip("/")
+    return f"http://{host}:{port}"
 
 
-def wait_for_env_ready(
-    base_url: str,
-    *,
-    timeout_s: float = 60.0,
-    initial_delay_s: float = 0.5,
-    max_delay_s: float = 8.0,
-) -> tuple[bool, Optional[str]]:
-    """
-    Poll GET {base_url}/health until 200 or timeout.
-    Returns (ok, last_error_message).
-    """
-    health_url = f"{base_url.rstrip('/')}/health"
+def wait_for_env_ready(base_url: str, timeout_s: float = 120.0) -> bool:
+    health = f"{base_url.rstrip('/')}/health"
     deadline = time.monotonic() + timeout_s
-    delay = initial_delay_s
-    last_err: Optional[str] = None
-
+    delay = 1.0
     while time.monotonic() < deadline:
         try:
-            req = urllib.request.Request(health_url, method="GET")
-            with urllib.request.urlopen(req, timeout=min(10.0, max(1.0, deadline - time.monotonic()))) as resp:
+            req = urllib.request.Request(health, method="GET")
+            with urllib.request.urlopen(req, timeout=10) as resp:
                 if resp.status == 200:
-                    return True, None
-                last_err = f"HTTP {resp.status}"
-        except urllib.error.HTTPError as e:
-            last_err = f"HTTPError {e.code}"
-        except urllib.error.URLError as e:
-            last_err = f"URLError {e.reason!r}"
-        except TimeoutError:
-            last_err = "timeout"
-        except OSError as e:
-            last_err = f"OSError {e}"
-
+                    return True
+        except Exception:
+            pass
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         time.sleep(min(delay, remaining))
-        delay = min(delay * 1.5, max_delay_s)
+        delay = min(delay * 1.5, 8.0)
+    return False
 
-    return False, last_err or "environment not reachable"
 
+# ---------------------------------------------------------------------------
+# Extract JSON from LLM output (may be wrapped in markdown fences)
+# ---------------------------------------------------------------------------
 
 def _extract_json(text: str) -> dict[str, Any]:
     text = text.strip()
-    m = re.search(r"\{[\s\S]*\}\s*$", text)
+    m = re.search(r"```(?:json)?\s*([\s\S]*?)```", text)
     if m:
-        text = m.group(0)
+        text = m.group(1).strip()
+    m2 = re.search(r"\{[\s\S]*\}\s*$", text)
+    if m2:
+        text = m2.group(0)
     return json.loads(text)
 
 
-def _build_system_prompt() -> str:
-    return """You are a SOC analyst agent in a simulated environment.
-You must respond with a single JSON object (no markdown fences) matching this schema:
+# ---------------------------------------------------------------------------
+# System prompt — tells the LLM how to respond
+# ---------------------------------------------------------------------------
+
+SYSTEM_PROMPT = """\
+You are a SOC analyst agent. You receive alert context and logs. \
+Respond with a SINGLE JSON object (no markdown, no extra text) matching:
+
 {
-  "kind": one of "noop", "submit_hypothesis", "submit_correlation", "finalize_triage", "destructive_network_block",
-  "technique_ids": string[] (MITRE IDs like T1190),
-  "rationale_tag": string,
-  "service_a", "service_b", "link_key", "link_value": strings for correlation,
-  "verdict": "true_positive" | "false_positive" | "benign" (required only when kind is finalize_triage),
-  "primary_technique": string or null,
-  "remediation_steps": string[] (ordered playbook ids, lowercase_snake_case),
-  "correlation_service_a", "correlation_service_b", "correlation_link_key", "correlation_link_value": optional strings on finalize for medium task,
-  "metadata": {}
+  "kind": "finalize_triage",
+  "verdict": "true_positive" | "false_positive" | "benign",
+  "technique_ids": ["T1190", ...],
+  "primary_technique": "T1190" or null,
+  "remediation_steps": ["step_one", "step_two"],
+  "service_a": "", "service_b": "", "link_key": "", "link_value": "",
+  "correlation_service_a": "", "correlation_service_b": "",
+  "correlation_link_key": "", "correlation_link_value": "",
+  "metadata": {},
+  "rationale_tag": ""
 }
-Use submit_hypothesis / submit_correlation for partial credit, then finalize_triage when confident.
-Never use destructive_network_block unless the scenario explicitly requires blocking internal RFC1918 /24 (penalized)."""
+
+Rules:
+- For the identify_malicious_ip task: set metadata.malicious_ip to the attacking IPv4.
+- For find_compromised_account: use submit_correlation first (service_a, service_b, \
+link_key, link_value), then finalize with metadata.compromised_account.
+- For recommend_firewall_rule: include all MITRE technique IDs and ordered \
+remediation_steps using lowercase_snake_case ids.
+- If a task looks benign or false_positive, say so and leave technique_ids empty.
+- Always finalize with kind=finalize_triage and a verdict."""
 
 
-def run_episode(
-    *,
+# ---------------------------------------------------------------------------
+# Run one episode for a given task
+# ---------------------------------------------------------------------------
+
+def run_task(
     task_name: str,
-    benchmark: str,
-    llm_base_url: str,
-    openenv_url: str,
     model: str,
-    api_key: str,
-    max_llm_steps: int,
-    env_wait_timeout_s: float,
+    llm: OpenAI,
+    env_url: str,
 ) -> None:
     rewards: List[float] = []
-    final_score = 0.0
-    success = False
     steps = 0
+    success = False
 
-    print(
-        f"[START] task={task_name} env={benchmark} model={model}",
-        flush=True,
-    )
-
-    ready, wait_err = wait_for_env_ready(
-        openenv_url,
-        timeout_s=env_wait_timeout_s,
-    )
-    if not ready:
-        print(
-            f"[STEP] step=0 action={_noop_action_json()} reward=0.00 done=true "
-            f"error={_escape_step_error(f'env wait failed: {wait_err}')}",
-            flush=True,
-        )
-        print(
-            "[END] success=false steps=0 score=0.00 rewards=0.00",
-            flush=True,
-        )
-        return
+    print(f"[START] task={task_name} env={BENCHMARK} model={model}", flush=True)
 
     try:
-        client_ai = OpenAI(base_url=llm_base_url.rstrip("/"), api_key=api_key)
-    except Exception as e:
-        print(
-            f"[STEP] step=0 action={_noop_action_json()} reward=0.00 done=true "
-            f"error={_escape_step_error(f'OpenAI client init: {e}')}",
-            flush=True,
-        )
-        print(
-            "[END] success=false steps=0 score=0.00 rewards=0.00",
-            flush=True,
-        )
-        return
-
-    try:
-        with SocAnalystEnv(base_url=openenv_url).sync() as env:
-            try:
-                result = env.reset(task=task_name)
-            except Exception as e:
-                print(
-                    f"[STEP] step=0 action={_noop_action_json()} reward=0.00 done=true "
-                    f"error={_escape_step_error(f'env reset: {e}')}",
-                    flush=True,
-                )
-                if not rewards:
-                    rewards.append(0.0)
-                print(
-                    f"[END] success=false steps=0 score=0.00 rewards={','.join(_fmt_reward(x) for x in rewards)}",
-                    flush=True,
-                )
-                return
-
+        with SocAnalystEnv(base_url=env_url).sync() as env:
+            result = env.reset(task=task_name)
             obs = result.observation
-            err: Optional[str] = None
 
-            while max_llm_steps > 0:
-                max_llm_steps -= 1
+            for _ in range(MAX_LLM_STEPS):
                 if result.done:
                     break
 
-                user = json.dumps(
-                    {
-                        "instruction": obs.instruction,
-                        "alert": {
-                            "id": obs.alert_id,
-                            "rule": obs.alert_rule,
-                            "severity": obs.alert_severity,
-                        },
-                        "log_view": obs.log_view,
-                        "max_steps": obs.max_steps,
-                        "feedback": obs.feedback,
-                        "available_commands": obs.available_commands,
+                user_msg = json.dumps({
+                    "task": task_name,
+                    "instruction": obs.instruction,
+                    "alert": {
+                        "id": obs.alert_id,
+                        "rule": obs.alert_rule,
+                        "severity": obs.alert_severity,
                     },
-                    ensure_ascii=False,
-                )
+                    "log_view": obs.log_view,
+                    "feedback": obs.feedback,
+                    "available_commands": obs.available_commands,
+                    "step": steps + 1,
+                    "max_steps": obs.max_steps,
+                }, ensure_ascii=False)
 
                 action: SocAction
+                step_err: Optional[str] = None
                 try:
-                    comp = client_ai.chat.completions.create(
+                    resp = llm.chat.completions.create(
                         model=model,
                         messages=[
-                            {"role": "system", "content": _build_system_prompt()},
-                            {"role": "user", "content": user},
+                            {"role": "system", "content": SYSTEM_PROMPT},
+                            {"role": "user", "content": user_msg},
                         ],
-                        temperature=0.2,
+                        temperature=0.1,
                     )
-                    raw = comp.choices[0].message.content or ""
+                    raw = resp.choices[0].message.content or "{}"
                     data = _extract_json(raw)
                     if "metadata" not in data:
                         data["metadata"] = {}
                     action = SocAction.model_validate(data)
-                    err = None
                 except Exception as e:
                     action = SocAction(kind="noop", metadata={})
-                    err = f"llm: {e}"
+                    step_err = f"llm_parse: {e}"
 
                 try:
                     result = env.step(action)
                     obs = result.observation
+                    rw = float(result.reward if result.reward is not None else (obs.reward or 0))
                 except Exception as e:
                     steps += 1
-                    rwf = 0.0
-                    rewards.append(rwf)
-                    step_err = _escape_step_error(f"env step: {e}")
+                    rewards.append(0.0)
                     print(
-                        f"[STEP] step={steps} action={json.dumps(action.model_dump(), separators=(',', ':'))} "
-                        f"reward={_fmt_reward(rwf)} done=true error={step_err}",
+                        f"[STEP] step={steps} action={_compact(action)} "
+                        f"reward=0.00 done=true error={_f_error(f'env.step: {e}')}",
                         flush=True,
                     )
                     break
 
                 steps += 1
-                rw = result.reward if result.reward is not None else obs.reward
-                rwf = float(rw) if rw is not None else 0.0
-                rewards.append(rwf)
+                rewards.append(rw)
+                done_now = result.done
 
-                esc_err = _escape_step_error(err)
+                if obs.final_grader_score is not None and obs.final_grader_score >= 0.85:
+                    success = True
+                if obs.episode_success:
+                    success = True
+
                 print(
-                    f"[STEP] step={steps} action={json.dumps(action.model_dump(), separators=(',', ':'))} "
-                    f"reward={_fmt_reward(rwf)} done={_fmt_bool(result.done)} error={esc_err}",
+                    f"[STEP] step={steps} action={_compact(action)} "
+                    f"reward={_f_reward(rw)} done={_f_bool(done_now)} error={_f_error(step_err)}",
                     flush=True,
                 )
 
-                if obs.final_grader_score is not None:
-                    final_score = float(obs.final_grader_score)
-                success = bool(obs.episode_success)
-
-                if result.done:
+                if done_now:
                     break
 
+            # If loop ended without finalizing, force a finalize so grader runs
+            if not result.done:
+                action = SocAction(
+                    kind="finalize_triage",
+                    verdict="benign",
+                    technique_ids=[],
+                    remediation_steps=[],
+                    metadata={},
+                )
+                try:
+                    result = env.step(action)
+                    obs = result.observation
+                    rw = float(result.reward if result.reward is not None else (obs.reward or 0))
+                    steps += 1
+                    rewards.append(rw)
+                    if obs.episode_success:
+                        success = True
+                    print(
+                        f"[STEP] step={steps} action={_compact(action)} "
+                        f"reward={_f_reward(rw)} done={_f_bool(result.done)} error=null",
+                        flush=True,
+                    )
+                except Exception as e:
+                    steps += 1
+                    rewards.append(0.0)
+                    print(
+                        f"[STEP] step={steps} action={_compact(action)} "
+                        f"reward=0.00 done=true error={_f_error(str(e))}",
+                        flush=True,
+                    )
+
     except Exception as e:
-        if not rewards:
+        if steps == 0:
+            steps = 1
             rewards.append(0.0)
-        conn_step = steps + 1
-        print(
-            f"[STEP] step={conn_step} action={_noop_action_json()} reward=0.00 done=true "
-            f"error={_escape_step_error(f'env connection: {e}')}",
-            flush=True,
-        )
-        print(
-            f"[END] success=false steps={conn_step} score={final_score:.2f} rewards={','.join(_fmt_reward(x) for x in rewards)}",
-            flush=True,
-        )
-        return
+            noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
+            print(
+                f"[STEP] step=1 action={noop} reward=0.00 done=true "
+                f"error={_f_error(f'connection: {e}')}",
+                flush=True,
+            )
 
     if not rewards:
         rewards.append(0.0)
 
+    rw_str = ",".join(_f_reward(r) for r in rewards)
     print(
-        f"[END] success={_fmt_bool(success)} steps={steps} score={final_score:.2f} rewards={','.join(_fmt_reward(x) for x in rewards)}",
+        f"[END] success={_f_bool(success)} steps={steps} rewards={rw_str}",
         flush=True,
     )
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--task",
-        default=os.environ.get("TASK", "easy"),
-        choices=("easy", "medium", "hard"),
-    )
-    parser.add_argument(
-        "--benchmark",
-        default=os.environ.get("BENCHMARK", "soc_analyst_env"),
-    )
-    parser.add_argument(
-        "--max-llm-steps",
-        type=int,
-        default=int(os.environ.get("MAX_LLM_STEPS", "24")),
-    )
-    parser.add_argument(
-        "--openenv-url",
-        default="",
-        help="Override OpenEnv base URL (else env vars / defaults)",
-    )
-    args = parser.parse_args()
+    api_base_url = os.getenv("API_BASE_URL", "https://api.openai.com/v1")
+    model_name = os.getenv("MODEL_NAME", "gpt-4o-mini")
+    hf_token = os.getenv("HF_TOKEN")
 
-    llm_base_url = os.environ.get("API_BASE_URL", "http://127.0.0.1:8000/v1")
-    model = os.environ.get("MODEL_NAME", "gpt-4o-mini")
-    api_key = os.environ.get("HF_TOKEN") or os.environ.get("OPENAI_API_KEY") or ""
-
-    openenv_url = (args.openenv_url or "").strip() or resolve_openenv_base_url()
-    env_wait_timeout_s = float(os.environ.get("ENV_WAIT_TIMEOUT", "60"))
-
-    if not api_key:
-        print(
-            f"[START] task={args.task} env={args.benchmark} model={model}",
-            flush=True,
-        )
-        print(
-            f"[STEP] step=0 action={_noop_action_json()} reward=0.00 done=true "
-            f"error={_escape_step_error('missing API key (HF_TOKEN or OPENAI_API_KEY)')}",
-            flush=True,
-        )
-        print(
-            "[END] success=false steps=0 score=0.00 rewards=0.00",
-            flush=True,
-        )
+    if not hf_token:
+        for t in ALL_TASKS:
+            print(f"[START] task={t} env={BENCHMARK} model={model_name}", flush=True)
+            noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
+            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=HF_TOKEN not set", flush=True)
+            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
         sys.exit(0)
 
-    run_episode(
-        task_name=args.task,
-        benchmark=args.benchmark,
-        llm_base_url=llm_base_url,
-        openenv_url=openenv_url,
-        model=model,
-        api_key=api_key,
-        max_llm_steps=args.max_llm_steps,
-        env_wait_timeout_s=env_wait_timeout_s,
-    )
-    sys.exit(0)
+    env_url = _resolve_env_url()
+
+    if not wait_for_env_ready(env_url, timeout_s=120):
+        for t in ALL_TASKS:
+            print(f"[START] task={t} env={BENCHMARK} model={model_name}", flush=True)
+            noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
+            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=env not reachable", flush=True)
+            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
+        sys.exit(0)
+
+    llm = OpenAI(base_url=api_base_url, api_key=hf_token)
+
+    for task_name in ALL_TASKS:
+        try:
+            run_task(task_name, model_name, llm, env_url)
+        except Exception:
+            traceback.print_exc(file=sys.stderr)
+            noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
+            print(f"[START] task={task_name} env={BENCHMARK} model={model_name}", flush=True)
+            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=fatal", flush=True)
+            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
 
 
 if __name__ == "__main__":
