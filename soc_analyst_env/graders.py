@@ -1,15 +1,18 @@
 # Copyright (c) Meta Platforms, Inc. and affiliates.
 # SPDX-License-Identifier: BSD-3-Clause
 
-"""Deterministic task graders: one function per registered task, scores in [0.0, 1.0]."""
+"""Deterministic task graders: one function per registered task, scores in (0, 1) exclusive."""
 
 from __future__ import annotations
 
 from typing import Any, Mapping
 
+_FLOOR = 0.01
+_CEIL = 0.99
+
 
 def _clamp(x: float) -> float:
-    return max(0.0, min(1.0, x))
+    return max(_FLOOR, min(_CEIL, x))
 
 
 def _norm_str(s: str) -> str:
@@ -132,12 +135,12 @@ def grade_identify_malicious_ip(
     base = _score_triage_easy(gold, submission)
     gip = str(gold.get("gold_malicious_ip", "")).strip()
     if not gip:
-        return base
+        return _clamp(base)
     meta = submission.get("metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
     pip = str(meta.get("malicious_ip", "")).strip()
-    ip_score = 1.0 if pip == gip else 0.0
+    ip_score = 0.98 if pip == gip else 0.02
     return _clamp(0.45 * base + 0.55 * ip_score)
 
 
@@ -150,12 +153,12 @@ def grade_find_compromised_account(
     base = _score_triage_medium(gold, submission)
     gacc = str(gold.get("gold_compromised_account", "")).strip().lower()
     if not gacc:
-        return base
+        return _clamp(base)
     meta = submission.get("metadata") or {}
     if not isinstance(meta, dict):
         meta = {}
     pacc = str(meta.get("compromised_account", "")).strip().lower()
-    acc_score = 1.0 if pacc == gacc else 0.0
+    acc_score = 0.98 if pacc == gacc else 0.02
     return _clamp(0.40 * base + 0.60 * acc_score)
 
 
@@ -169,10 +172,10 @@ def grade_recommend_firewall_rule(
     base = _score_triage_hard(gold, submission)
     rules = gold.get("gold_firewall_rules")
     if not rules or not isinstance(rules, list):
-        return base
+        return _clamp(base)
     norm_rules = [_norm_str(str(r)).replace("-", "_") for r in rules if str(r).strip()]
     if not norm_rules:
-        return base
+        return _clamp(base)
     steps = [_norm_str(str(x)).replace("-", "_") for x in submission.get("remediation_steps", [])]
     joined = " ".join(steps)
     hits = sum(1 for r in norm_rules if r and r in joined)

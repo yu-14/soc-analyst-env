@@ -47,8 +47,17 @@ MAX_LLM_STEPS = 5
 # Formatting helpers (match hackathon stdout spec exactly)
 # ---------------------------------------------------------------------------
 
+_SCORE_FLOOR = 0.01
+_SCORE_CEIL = 0.99
+
+
+def _clamp_score(r: float) -> float:
+    return max(_SCORE_FLOOR, min(_SCORE_CEIL, r))
+
+
 def _f_reward(r: Optional[float]) -> str:
-    return f"{float(r or 0):.2f}"
+    v = float(r) if r is not None else _SCORE_FLOOR
+    return f"{_clamp_score(v):.2f}"
 
 
 def _f_bool(b: bool) -> str:
@@ -212,13 +221,13 @@ def run_task(
                 try:
                     result = env.step(action)
                     obs = result.observation
-                    rw = float(result.reward if result.reward is not None else (obs.reward or 0))
+                    rw = _clamp_score(float(result.reward if result.reward is not None else (obs.reward or 0)))
                 except Exception as e:
                     steps += 1
-                    rewards.append(0.0)
+                    rewards.append(_SCORE_FLOOR)
                     print(
                         f"[STEP] step={steps} action={_compact(action)} "
-                        f"reward=0.00 done=true error={_f_error(f'env.step: {e}')}",
+                        f"reward={_f_reward(_SCORE_FLOOR)} done=true error={_f_error(f'env.step: {e}')}",
                         flush=True,
                     )
                     break
@@ -253,7 +262,7 @@ def run_task(
                 try:
                     result = env.step(action)
                     obs = result.observation
-                    rw = float(result.reward if result.reward is not None else (obs.reward or 0))
+                    rw = _clamp_score(float(result.reward if result.reward is not None else (obs.reward or 0)))
                     steps += 1
                     rewards.append(rw)
                     if obs.episode_success:
@@ -265,26 +274,26 @@ def run_task(
                     )
                 except Exception as e:
                     steps += 1
-                    rewards.append(0.0)
+                    rewards.append(_SCORE_FLOOR)
                     print(
                         f"[STEP] step={steps} action={_compact(action)} "
-                        f"reward=0.00 done=true error={_f_error(str(e))}",
+                        f"reward={_f_reward(_SCORE_FLOOR)} done=true error={_f_error(str(e))}",
                         flush=True,
                     )
 
     except Exception as e:
         if steps == 0:
             steps = 1
-            rewards.append(0.0)
+            rewards.append(_SCORE_FLOOR)
             noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
             print(
-                f"[STEP] step=1 action={noop} reward=0.00 done=true "
+                f"[STEP] step=1 action={noop} reward={_f_reward(_SCORE_FLOOR)} done=true "
                 f"error={_f_error(f'connection: {e}')}",
                 flush=True,
             )
 
     if not rewards:
-        rewards.append(0.0)
+        rewards.append(_SCORE_FLOOR)
 
     rw_str = ",".join(_f_reward(r) for r in rewards)
     print(
@@ -306,8 +315,8 @@ def main() -> None:
         for t in ALL_TASKS:
             print(f"[START] task={t} env={BENCHMARK} model={model_name}", flush=True)
             noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
-            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=HF_TOKEN not set", flush=True)
-            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
+            print(f"[STEP] step=1 action={noop} reward={_f_reward(_SCORE_FLOOR)} done=true error=HF_TOKEN not set", flush=True)
+            print(f"[END] success=false steps=1 rewards={_f_reward(_SCORE_FLOOR)}", flush=True)
         sys.exit(0)
 
     env_url = _resolve_env_url()
@@ -316,8 +325,8 @@ def main() -> None:
         for t in ALL_TASKS:
             print(f"[START] task={t} env={BENCHMARK} model={model_name}", flush=True)
             noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
-            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=env not reachable", flush=True)
-            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
+            print(f"[STEP] step=1 action={noop} reward={_f_reward(_SCORE_FLOOR)} done=true error=env not reachable", flush=True)
+            print(f"[END] success=false steps=1 rewards={_f_reward(_SCORE_FLOOR)}", flush=True)
         sys.exit(0)
 
     llm = OpenAI(base_url=api_base_url, api_key=hf_token)
@@ -329,8 +338,8 @@ def main() -> None:
             traceback.print_exc(file=sys.stderr)
             noop = json.dumps({"kind": "noop", "metadata": {}}, separators=(",", ":"))
             print(f"[START] task={task_name} env={BENCHMARK} model={model_name}", flush=True)
-            print(f"[STEP] step=1 action={noop} reward=0.00 done=true error=fatal", flush=True)
-            print(f"[END] success=false steps=1 rewards=0.00", flush=True)
+            print(f"[STEP] step=1 action={noop} reward={_f_reward(_SCORE_FLOOR)} done=true error=fatal", flush=True)
+            print(f"[END] success=false steps=1 rewards={_f_reward(_SCORE_FLOOR)}", flush=True)
 
 
 if __name__ == "__main__":
